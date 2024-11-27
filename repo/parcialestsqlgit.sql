@@ -405,6 +405,89 @@ begin
 	deallocate c_precios_mal
 end
 
+--alguien q lo hizo mejor que vos
+drop table carga_erronea_de_precios
+
+create table carga_erronea_de_precios (
+	factura_tipo char(1),
+	factura_numero char(8),
+	factura_sucursal char(4),
+	producto char(8),
+	precio_distinto decimal(12,2),
+	constraint PK primary key(factura_tipo,factura_numero,factura_sucursal,producto) -- No sirve para update
+)
+
+alter trigger validar_precio_producto on Item_Factura
+after insert -- No se contempla el caso de update de un item
+as
+begin
+	declare @factura_tipo char(1)
+	declare @factura_sucursal char(4)
+	declare @factura_numero char(8)
+	declare @producto char(8)
+	declare @precio_distinto decimal(12,2)
+	declare @precio_real decimal(12,2)
+
+	declare cursor_productos cursor for	
+										select i.item_tipo, i.item_numero, i.item_sucursal, i.item_producto, i.item_precio, p.prod_precio
+										from inserted i
+										join Producto p on i.item_producto = p.prod_codigo
+										where i.item_precio != p.prod_precio
+
+	open cursor_productos
+	fetch next from cursor_productos into @factura_tipo, @factura_numero, @factura_sucursal, @producto, @precio_distinto, @precio_real
+
+	while @@fetch_status = 0
+	begin
+		insert into carga_erronea_de_precios (factura_tipo, factura_numero, factura_sucursal, producto, precio_distinto) --EVALUAR UPDATE y CAMBIO EN FACT TOTAL
+		values (@factura_tipo, @factura_numero, @factura_sucursal, @producto, @precio_distinto)
+
+		-- Update el precio del item
+		update Item_Factura
+		set item_precio = @precio_real
+		where item_tipo+item_numero+item_sucursal = @factura_tipo+@factura_numero+@factura_sucursal
+		      and item_producto = @producto
+
+		-- No hay informacion suficiente para saber como la tabla Factura esta calculando su total pero podria 
+		-- ser de la siguiente manera
+		-- update Factura
+		-- set fact_total = (select sum(item_precio * item_cantidad) from Item_Factura where item_tipo+item_numero+item_sucursal = @factura_tipo+@factura_numero+@factura_sucursal)
+		-- where fact_tipo+fact_numero+fact_sucursal = @factura_tipo+@factura_numero+@factura_sucursal
+		     		
+		fetch next from cursor_productos into @factura_tipo, @factura_numero, @factura_sucursal, @producto, @precio_distinto, @precio_real
+	end
+	close cursor_productos
+	deallocate cursor_productos
+end
+
+-- Prueba precio mal
+insert into Item_Factura (item_tipo, item_sucursal, item_numero, item_producto, item_cantidad, item_precio) values
+('A', '0003', '00092444', '00000032', 6.00, 3.00)
+
+select * from carga_erronea_de_precios
+
+select *
+from Item_Factura
+where item_tipo = 'A'
+      and item_sucursal = '0003'
+	  and item_numero = '00092444'
+	  and item_producto = '00000032'
+
+select *
+from Producto
+where prod_codigo = '00000032'
+
+-- Prueba precio ok
+insert into Item_Factura (item_tipo, item_sucursal, item_numero, item_producto, item_cantidad, item_precio) values
+('A', '0003', '00092444', '00000864', 6.00, 4.70)
+
+select *
+from Item_Factura
+where item_tipo = 'A'
+      and item_sucursal = '0003'
+	  and item_numero = '00092444'
+	  and item_producto = '00000864'
+
 
 
 --select * from producto
@@ -468,6 +551,83 @@ begin
 	
 		end 
 end
+
+
+--alguien mejor que vos
+ALTER TABLE STOCK ADD CONSTRAINT const_stock_positivo CHECK (stoc_cantidad >= 0)
+	
+CREATE OR ALTER TRIGGER tr_descontar_stock ON dbo.Item_Factura INSTEAD OF INSERT
+AS
+	SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
+	
+	-- Variables
+	DECLARE @producto char(8), @cantidad_vendida decimal(12,2), @componente char(8), @cantidad_componente decimal(12,2)
+	
+	-- Cursor
+	DECLARE cursor_producto CURSOR FOR
+		SELECT i.item_producto, SUM(i.item_cantidad)
+		FROM INSERTED i
+		GROUP BY i.item_producto
+		
+	OPEN cursor_producto
+	FETCH cursor_producto INTO @producto, @cantidad_vendida
+	
+	WHILE @@FETCH_STATUS = 0
+		BEGIN
+		
+		-- Si no es compuesto, descuento sobre el producto original
+		IF NOT EXISTS (SELECT 1 FROM Composicion c WHERE c.comp_producto = @producto)
+			BEGIN
+				UPDATE STOCK SET stoc_cantidad = stoc_cantidad - @cantidad_vendida WHERE stoc_deposito = '00' AND stoc_producto = @producto
+				IF @@ERROR != 0   
+					BEGIN
+						PRINT(CONCAT('EL PRODUCTO ', @producto, 'YA NO TIENE STOCK'))
+					END
+				ELSE
+					BEGIN
+						INSERT INTO GD2C2022PRACTICA.dbo.Item_Factura
+						(item_tipo, item_sucursal, item_numero, item_producto, item_cantidad, item_precio)
+						SELECT item_tipo, item_sucursal, item_numero, item_producto, item_cantidad, item_precio
+						FROM INSERTED WHERE item_producto = @producto
+					END
+			END
+		
+		-- Si es compuesto itero y descuento sobre los componentes
+		DECLARE cursor_componente CURSOR FOR
+			SELECT comp_componente, comp_cantidad
+			FROM Composicion
+			WHERE comp_producto = @producto
+		
+		OPEN cursor_componente
+		FETCH cursor_componente INTO @componente, @cantidad_componente
+		
+		WHILE @@FETCH_STATUS = 0
+			BEGIN
+				UPDATE STOCK SET stoc_cantidad = stoc_cantidad - @cantidad_vendida * @cantidad_componente WHERE stoc_deposito = '00' AND stoc_producto = @componente
+				IF @@ERROR != 0   
+				BEGIN
+					PRINT(CONCAT('EL PRODUCTO ', @componente, 'YA NO TIENE STOCK'))
+				END
+				ELSE
+				BEGIN
+					INSERT INTO Item_Factura
+					(item_tipo, item_sucursal, item_numero, item_producto, item_cantidad, item_precio)
+					SELECT item_tipo, item_sucursal, item_numero, item_producto, item_cantidad, item_precio
+					FROM INSERTED WHERE item_producto = @componente
+				END
+				
+				FETCH cursor_componente INTO @componente,@cantidad_componente
+			END
+			
+		CLOSE cursor_componente
+		DEALLOCATE cursor_componente
+		
+		FETCH cursor_producto INTO @producto,@cantidad_vendida
+		END
+	
+	CLOSE cursor_producto
+	DEALLOCATE cursor_producto
+GO
 
 
 /*

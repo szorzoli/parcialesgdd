@@ -170,6 +170,7 @@ select c.clie_codigo, c.clie_razon_social,
 
 
 /* 
+SQL_parcial_2022_11_12
 Realizar una consulta SQL que permita saber los clientes que compraron por encima del promedio de compras (fact_total) de todos los clientes del 2012.
 De estos clientes mostrar para el 2012:
 	1.El código del cliente
@@ -209,6 +210,44 @@ select c.clie_codigo, c.clie_razon_social,
 		(select count(distinct i.item_producto) from Item_Factura i
 			join Factura f on f.fact_numero + f.fact_sucursal +f.fact_tipo = i.item_numero + i.item_sucursal + i.item_tipo
 			where f.fact_cliente = c.clie_codigo and YEAR(f.fact_fecha) = 2012) between 5 and 10 then 1 else 0 end desc
+
+--alguien mejor que vos
+
+select	f.fact_cliente,
+		c.clie_razon_social,
+
+		(select top 1 i2.item_producto
+		 from Item_Factura i2
+		 join Factura f2 on f2.fact_tipo+f2.fact_sucursal+f2.fact_numero = i2.item_tipo+i2.item_sucursal+i2.item_numero and f2.fact_cliente=f.fact_cliente
+		 where year(f2.fact_fecha)=2012
+		 group by i2.item_producto
+		 order by sum(i2.item_cantidad) desc) as 'Cod_Producto_Mas_Comprado',
+
+		 (select top 1 p.prod_detalle
+		 from Item_Factura i2
+		 join Factura f2 on f2.fact_tipo+f2.fact_sucursal+f2.fact_numero = i2.item_tipo+i2.item_sucursal+i2.item_numero and f2.fact_cliente=f.fact_cliente
+		 join Producto p on p.prod_codigo=i2.item_producto
+		 where year(f2.fact_fecha)=2012
+		 group by i2.item_producto, p.prod_detalle
+		 order by sum(i2.item_cantidad) desc) as 'Producto_Mas_Comprado',
+		
+		 count(distinct i.item_producto) as 'Productos_Distintos_Comprados',
+
+		 (select isnull(sum(i2.item_cantidad),0)
+		  from Item_Factura i2
+		  join Factura f2 on f2.fact_tipo+f2.fact_sucursal+f2.fact_numero = i2.item_tipo+i2.item_sucursal+i2.item_numero and f2.fact_cliente=f.fact_cliente
+		  where year(f2.fact_fecha)=2012 and i2.item_producto in (select c.comp_producto from Composicion c)) 
+				
+from Factura f
+join Cliente c on f.fact_cliente=c.clie_codigo
+join Item_Factura i on f.fact_tipo+f.fact_sucursal+f.fact_numero = i.item_tipo+i.item_sucursal+i.item_numero
+where year(f.fact_fecha)=2012
+group by f.fact_cliente, c.clie_razon_social
+having sum(i.item_cantidad*i.item_precio) >  (select avg(f2.fact_total)
+					      from Factura f2
+					      where year(f2.fact_fecha)=2012
+					      )
+order by case when count(distinct i.item_producto) between 5 and 10 then 1 else 0 end desc
 
 
 
