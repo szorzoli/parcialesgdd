@@ -53,7 +53,7 @@ select p.prod_detalle, count(*),
 	CASE 
 		WHEN COUNT(DISTINCT CASE WHEN YEAR(f.fact_fecha) = 2012 THEN f.fact_numero END) > 100
 			THEN 'Popular'
-			ELSE 'Sin interés'
+			ELSE 'Sin interÃ©s'
 		END AS leyenda,
 	(select top 1 f2.fact_cliente from Item_Factura i2
 		join Factura f2 on i2.item_numero = f2.fact_numero and i2.item_sucursal = f2.fact_sucursal and i2.item_tipo = f2.fact_tipo
@@ -191,4 +191,21 @@ select year(f.fact_fecha), fl.fami_id, fl.fami_detalle, count(distinct f.fact_nu
 	group by year(f.fact_fecha), fl.fami_id, fl.fami_detalle
 	having count (distinct c.comp_producto) >=1
 
---
+--hoy
+select e.empl_apellido as apellido, e.empl_nombre as nombre,sum(i.item_cantidad) as cantidad_vendida,
+	sum(i.item_precio * i.item_cantidad)/count(distinct f.fact_numero+f.fact_sucursal+f.fact_tipo) as monto_promedio, 
+	sum(i.item_precio * i.item_cantidad) as monto_total from Factura f
+	join Empleado e on f.fact_vendedor = e.empl_codigo
+	JOIN Item_Factura i on i.item_numero = f.fact_numero and i.item_sucursal = f.fact_sucursal and i.item_tipo = f.fact_tipo
+	where f.fact_vendedor in
+		(select top 5 f2.fact_vendedor from Factura f2 
+			where year(f2.fact_fecha) = (select max(year(fact_fecha)) from Factura)
+			group by f2.fact_vendedor
+			order by count(distinct f2.fact_cliente) asc, sum (f2.fact_total) desc)
+		 and year(f.fact_fecha) =  (select max(year(fact_fecha)) from Factura) 
+		 and 
+			(select count(*) from Item_Factura i2 
+				where i2.item_numero = f.fact_numero and i2.item_sucursal = f.fact_sucursal and i2.item_tipo = f.fact_tipo)
+			> 2
+	group by f.fact_vendedor, e.empl_apellido, e.empl_nombre
+	order by count( f.fact_numero+f.fact_sucursal+f.fact_tipo) desc, f.fact_vendedor
